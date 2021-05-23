@@ -1,0 +1,173 @@
+---
+title: "Prediction of quality of exercises"
+author: "Paul Bruynel"
+date: "23-5-2021"
+output: html_document
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message=FALSE, fig.path = "figure/")
+```
+
+```{r message=FALSE, echo=FALSE}
+defaultW <- getOption("warn") 
+options(warn = -1)
+set.seed(123)
+```
+
+## Introduction
+Using devices such as *Jawbone Up*, *Nike FuelBand*, and *Fitbit* it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. The goal of this project is to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants to draw conclusions about the quality of their exercises. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+## Strategy
+There is a dataset 'training' which contains measurements of the exercises of the participants and a specification of the manner in which the exercise was done. This specification is a variable named 'classe'. Its values are defined below:  
+
+| classe | manner in which the exercise is done |
+|:---|:----|
+| A | exactly according to the specification |
+| B | throwing the elbows to the front |
+| C | lifting the dumbbell only halfway |
+| D | lowering the dumbbell only halfway |
+| E | throwing the hips to the front |
+
+The testing dataset does not contain the variable 'classe'.  
+The purpose is to construct a model that can determine in what manner an exercise is performed. In other words, we will construct a model that predicts the classe of an exercise based on its data.  
+The training dataset is used to build several models. The choice of the model to be used for the predictions will be based on its accuracy.  
+The model of choice is used to predict the classe variable for the measurements of the testing dataset.
+
+## Exploration of the data
+The data for this project has been made available by Groupware\@LES. They collected the data for their researchproject [Human Activity Recognition](http://groupware.les.inf.puc-rio.br/har).  
+The data has already been partitioned in a trainingset and a testset. They have been downloaded for this project by following these links:  
+
+* trainingset: https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+* testset: https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+Both csv files have been copied to the working directory and loaded.
+```{r loadData}
+training <- read.csv("pml-training.csv")
+testing <- read.csv("pml-testing.csv")
+```
+Dimensions of the training dataset:
+```{r dimTraining}
+dim(training)
+```
+Dimensions of the testing dataset:
+```{r dimTesting}
+dim(testing)
+```
+Distribution of the classe variable in the training dataset:
+```{r classeDistribution}
+table(training$classe)
+```
+A visual inspection of the variables (column names) shows that the first 7 columns do not contain relevant data for the analysis:
+```{r irrelevantVariables}
+names(training[,c(1:7)])
+```
+There are also a lot of missing values. It turns out that there are 67 columns that contain for 90% missing values:
+```{r missingValues}
+naCols <- colMeans(is.na(training)) > 0.9
+table(naCols)
+```
+
+
+## Cleaning the data
+From the exploration of the data we can conclude that the first 7 columns can be removed from the training dataset. Also the columns that contain for 90% missing values are removed. Besides that all features that have near zero variance are removed as well.  
+This will be done for both the training dataset and the testing dataset.
+```{r cleaning}
+library(caret)
+# Remove the first 7 columns
+training <- training[, -c(1:7)]
+testing <- testing[, -c(1:7)]
+
+# Remove columns with more than 90% NAs
+naCols <- colMeans(is.na(training)) > 0.9
+training <- training[, !naCols]
+testing <- testing[, !naCols]
+
+# Remove columns with near zero variance
+nvz <- nearZeroVar(training)
+training <- training[,-nvz]
+testing <- testing[,-nvz]
+```
+The number of remaining columns is: `r dim(training)[2]`  
+The analysis is continued with this reduced dataset.  
+To make things easier in R, we store the classe variable as a factor in the training dataset.
+```{r classeAsFactor}
+training$classe <- as.factor(training$classe)
+```
+
+## Building models
+In this section several models are built based on the training dataset.  
+The training dataset is divided in a part used to train the model and a part used to validate the model. The training part contains 70% of the training dataset, the validation part 30%.  
+For the resampling method a 10-fold cross validation method is used.
+```{r partitioning}
+# Create a training set and a validation set
+inTrain = createDataPartition(training$classe, p = 0.7, list = FALSE)
+trainingData = training[ inTrain,]
+validationData = training[-inTrain,]
+# specify that the resampling method is 10-fold CV
+fitControl <- trainControl(method = "cv", number = 10)
+```
+Each model is used to predict the value of the classe variable for each measurement in the validation part of the training dataset. The accuracy of each model is calculated using the confusion matrix.
+
+### Decision Tree
+The first algorithm for which a model is built is the decision tree.  
+The picture below shows the resulting decision tree.
+```{r decisionTree}
+library(rpart)
+library(rattle)
+modelDT <- train(classe~., data=trainingData, method="rpart", trControl=fitControl)
+fancyRpartPlot(modelDT$finalModel, sub = "Decision Tree for the classe variable")
+```
+
+The accuracy is calculated for the decision tree model:
+```{r accuracyDecisionTree}
+predictValidationDT <- predict(modelDT, newdata = validationData)
+cmDT <- confusionMatrix(predictValidationDT, validationData$classe)
+cmDT$overall['Accuracy']
+```
+The accuracy of this model is `r round(cmDT$overall['Accuracy'],2)`.
+
+### Random Forest
+The second algorithm is the random forest.
+```{r randomForest, cache=TRUE}
+modelRF <- train(classe~., data=trainingData, method="rf", trControl=fitControl)
+```
+The accuracy is calculated for the random forest model:
+```{r accuracyRandomForest}
+predictValidationRF <- predict(modelRF, newdata = validationData)
+cmRF <- confusionMatrix(predictValidationRF, validationData$classe)
+cmRF$overall['Accuracy']
+```
+The accuracy of this model is `r round(cmRF$overall['Accuracy'],2)`.
+
+### Generalized Boosted Model
+The third algorithm is the generalized boosted model.
+```{r generalizedBoostedModel, cache=TRUE}
+modelGBM <- train(classe~., data=trainingData, method="gbm", trControl=fitControl, verbose=FALSE)
+```
+The accuracy is calculated for the generalized boosted model:
+```{r accuracyGeneralizedBoostedModel}
+predictValidationGBM <- predict(modelGBM, newdata = validationData)
+cmGBM <- confusionMatrix(predictValidationGBM, validationData$classe)
+cmGBM$overall['Accuracy']
+```
+The accuracy of this model is `r round(cmGBM$overall['Accuracy'],2)`.
+
+## Model selection
+The model with the best accuracy is selected to be used to predict the classe variable for the measurements of the testing dataset. The accuracy of each model is shown again in the overview below:
+
+| model | accuracy |
+|:---|:----|
+| Decision Tree | `r round(cmDT$overall['Accuracy'],2)` |
+| Random Forest | `r round(cmRF$overall['Accuracy'],2)` |
+| Generalized Boosted Model | `r round(cmGBM$overall['Accuracy'],2)` |
+
+The model of choice is the Random Forest, which is slightly better than the Generalized Boosted Model.
+
+## Predicting the quality of exercises
+The Random Forest model is used to determine the quality of the exercises contained in the testing dataset.  
+Here are the results:
+```{r qualityOfExercises}
+predictTesting <- predict(modelRF, newdata = testing)
+predictTesting
+```
+
